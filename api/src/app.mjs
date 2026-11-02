@@ -6,23 +6,9 @@
 
 import express from 'express';
 import { DataTypes, Sequelize } from 'sequelize';
-import { createLogger, format, transports } from 'winston';
 import { z } from 'zod';
-
-if (process.env.NODE_ENV !== 'test') {
-  try {
-    process.loadEnvFile();
-  } catch {
-    // no .env
-  }
-}
-
-const logger = createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  silent: process.env.NODE_ENV === 'test',
-  format: format.combine(format.timestamp(), format.json()),
-  transports: [new transports.Console()]
-});
+import { env } from './config/env.mjs';
+import { logger } from './config/logger.mjs';
 
 // ---------------------------------------------------------------- database
 
