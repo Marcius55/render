@@ -85,7 +85,7 @@ app.get('/api/events/:id', async (req, res) => {
     return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
   }
 
-  const count = await Registration.count({ where: { eventId: ev.id } });
+  const count = await registrationRepository.countByEvent(ev.id)
   res.status(200).json({ ...ev.toJSON(), registered: count, spotsLeft: Math.max(ev.capacity - count, 0) });
 });
 
@@ -174,27 +174,7 @@ app.get('/api/events/:id/registrations', async (req, res) => {
   if (!ev) {
     return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
   }
-  const registrations = await Registration.findAll({ where: { eventId: ev.id }, order: [['createdAt', 'ASC']] });
-  res.json(registrations);
-});
-
-app.get('/api/events/:id/registrations', async (req, res) => {
-  const p = idSchema.safeParse(req.params);
-  if (!p.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-      }
-    });
-  }
-
-  const ev = await eventRepository.findById(p.data.id);
-  if (!ev) {
-    return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
-  }
-  const registrations = await Registration.findAll({ where: { eventId: ev.id }, order: [['createdAt', 'ASC']] });
+  const registrations = await registrationRepository.findAllByEvent(ev.id);
   res.json(registrations);
 });
 
@@ -221,17 +201,17 @@ app.post('/api/events/:id/registrations', async (req, res, next) => {
       });
     }
 
-    const ev = await eventRepository.findById(p.data.id)
+    const ev = await eventRepository.findById(p.data.id);
     if (ev) {
-      const existing = await Registration.findOne({ where: { eventId: ev.id, email: data.data.email } });
+      const existing = await registrationRepository.findByEventAndEmail(ev.id, data.data.email);
       if (!existing) {
         // is the event full?
-        const count = await Registration.count({ where: { eventId: ev.id } });
+        const count = await registrationRepository.countByEvent(ev.id);
         if (count > ev.capacity) {
           return res.status(409).json({ error: { code: 'CONFLICT', message: 'Event is full' } });
         }
 
-        const reg = await Registration.create({ eventId: ev.id, name: data.data.name, email: data.data.email });
+        const reg = await registrationRepository.create({ eventId: ev.id, name: data.data.name, email: data.data.email });
         logger.info('new registration for ' + ev.title + ': ' + data.data.name + ' <' + data.data.email + '>');
 
         // TODO send a confirmation mail
@@ -251,10 +231,10 @@ app.post('/api/events/:id/registrations', async (req, res, next) => {
 });
 
 app.get('/api/stats', async (req, res) => {
-  const events = await Event.findAll();
+  const events = await eventRepository.findAll()
   const result = [];
   for (let i = 0; i < events.length; i++) {
-    const regs = await Registration.findAll({ where: { eventId: events[i].id } });
+    const regs = await registrationRepository.findAllByEvent(events[i].id)	
     let pct = 0;
     if (events[i].capacity > 0) {
       pct = Math.round((regs.length / events[i].capacity) * 100);
