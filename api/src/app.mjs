@@ -4,35 +4,16 @@
 // It works, and tests/integration proves it. It is also hard to read, hard to test and
 // hard to change safely. Part 1 of the assignment: find out why, then split it into layers.
 
+
 import express from 'express';
-import { DataTypes, Sequelize } from 'sequelize';
 import { z } from 'zod';
-import { env } from './config/env.mjs';
 import { logger } from './config/logger.mjs';
+import { sequelize } from './db/sequelize.mjs';
+import { Event, Registration } from './models/index.mjs';
 
-// ---------------------------------------------------------------- database
-
-export const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: process.env.DB_STORAGE || './data/events.sqlite',
-  logging: false
-});
-
-export const Event = sequelize.define('Event', {
-  title: { type: DataTypes.STRING(120), allowNull: false },
-  description: { type: DataTypes.TEXT, allowNull: true },
-  location: { type: DataTypes.STRING(120), allowNull: false },
-  startsAt: { type: DataTypes.DATE, allowNull: false },
-  capacity: { type: DataTypes.INTEGER, allowNull: false, validate: { min: 1 } }
-});
-
-export const Registration = sequelize.define('Registration', {
-  name: { type: DataTypes.STRING(100), allowNull: false },
-  email: { type: DataTypes.STRING(254), allowNull: false }
-});
-
-Event.hasMany(Registration, { foreignKey: { name: 'eventId', allowNull: false }, onDelete: 'CASCADE' });
-Registration.belongsTo(Event, { foreignKey: 'eventId' });
+export { sequelize, Event, Registration };
+export { seedDemoData } from './db/seed.mjs';
+import { eventRepository } from './repositories/eventRepository.mjs';
 
 // ---------------------------------------------------------------- validation
 
@@ -82,7 +63,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/events', async (req, res) => {
-  const events = await Event.findAll({ order: [['startsAt', 'ASC']] });
+  const events = await eventRepository.findAllOrderedByStart()
   res.json(events);
 });
 
@@ -98,7 +79,7 @@ app.get('/api/events/:id', async (req, res) => {
     });
   }
 
-  const ev = await Event.findByPk(p.data.id);
+  const ev = await eventRepository.findById(p.data.id)
   if (!ev) {
     return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
   }
@@ -119,7 +100,7 @@ app.post('/api/events', async (req, res) => {
     });
   }
 
-  const event = await Event.create(result.data);
+  const event = await eventRepository.create(result.data)
   res.status(201).location('/api/events/' + event.id).json(event);
 });
 
@@ -146,18 +127,18 @@ app.patch('/api/events/:id', async (req, res, next) => {
       });
     }
 
-    const event = await Event.findByPk(p.data.id);
+    const event = await eventRepository.findById(p.data.id)
     if (!event) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
     }
-    await event.update(b.data);
+    await eventRepository.update(event, b.data);
     res.status(200).json(event);
   } catch (err) {
     next(err);
   }
 });
 
-app.delete('/api/events/:id', async (req, res) => {
+  app.delete('/api/events/:id', async (req, res) => {
   const p = idSchema.safeParse(req.params);
   if (!p.success) {
     return res.status(400).json({
@@ -169,7 +150,7 @@ app.delete('/api/events/:id', async (req, res) => {
     });
   }
 
-  const deleted = await Event.destroy({ where: { id: p.data.id } });
+  const deleted = await eventRepository.deleteById(p.data.id);
   if (deleted === 0) {
     return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
   }
@@ -188,7 +169,27 @@ app.get('/api/events/:id/registrations', async (req, res) => {
     });
   }
 
-  const ev = await Event.findByPk(p.data.id);
+  const ev = await eventRepository.findById(p.data.id);
+  if (!ev) {
+    return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
+  }
+  const registrations = await Registration.findAll({ where: { eventId: ev.id }, order: [['createdAt', 'ASC']] });
+  res.json(registrations);
+});
+
+app.get('/api/events/:id/registrations', async (req, res) => {
+  const p = idSchema.safeParse(req.params);
+  if (!p.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
+      }
+    });
+  }
+
+  const ev = await eventRepository.findById(p.data.id);
   if (!ev) {
     return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
   }
@@ -219,7 +220,7 @@ app.post('/api/events/:id/registrations', async (req, res, next) => {
       });
     }
 
-    const ev = await Event.findByPk(p.data.id);
+    const ev = await eventRepository.findById(p.data.id)
     if (ev) {
       const existing = await Registration.findOne({ where: { eventId: ev.id, email: data.data.email } });
       if (!existing) {
@@ -289,48 +290,3 @@ app.use((err, req, res, _next) => {
 });
 
 // ---------------------------------------------------------------- demo data
-
-const inDays = (days, hour = 14) => {
-  const date = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-  date.setHours(hour, 0, 0, 0);
-  return date;
-};
-
-export async function seedDemoData() {
-  await Event.bulkCreate([
-    {
-      title: 'Welcome Day IXD',
-      description: 'Meet your classmates, lecturers and the projects of this year.',
-      location: 'Campus Mechelen',
-      startsAt: inDays(7, 10),
-      capacity: 120
-    },
-    {
-      title: 'Prototyping with Figma & APIs',
-      description: 'Connect a clickable prototype to real data in one afternoon.',
-      location: 'Room B204',
-      startsAt: inDays(14),
-      capacity: 25
-    },
-    {
-      title: 'Backend Bootcamp',
-      description: 'A small, hands-on session. Only two seats, so be quick.',
-      location: 'Room C101',
-      startsAt: inDays(21),
-      capacity: 2
-    },
-    {
-      title: 'Portfolio Review',
-      description: 'Get feedback on your portfolio from industry guests.',
-      location: 'Online',
-      startsAt: inDays(-10),
-      capacity: 40
-    }
-  ]);
-
-  await Registration.bulkCreate([
-    { eventId: 1, name: 'Ada Lovelace', email: 'ada@example.com' },
-    { eventId: 1, name: 'Grace Hopper', email: 'grace@example.com' },
-    { eventId: 2, name: 'Alan Turing', email: 'alan@example.com' }
-  ]);
-}
