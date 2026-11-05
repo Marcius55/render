@@ -14,6 +14,7 @@ import { Event, Registration } from './models/index.mjs';
 export { sequelize, Event, Registration };
 export { seedDemoData } from './db/seed.mjs';
 import { eventRepository } from './repositories/eventRepository.mjs';
+import { registrationRepository } from './repositories/registrationRepository.mjs';
 
 // ---------------------------------------------------------------- validation
 
