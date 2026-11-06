@@ -17,7 +17,7 @@ async function register(eventId, { name, email }) {
   }
 
   const count = await registrationRepository.countByEvent(event.id);
-  if (count > event.capacity) {
+  if (count >= event.capacity) {
     throw new AppError(409, 'CONFLICT', 'Event is full');
   }
 
