@@ -1,14 +1,15 @@
 if (process.env.NODE_ENV !== 'test') {
-      try {
+  try {
     process.loadEnvFile();
-      } catch {
+  } catch {
     // no .env
   }
 }
 
 export const env = {
-      nodeEnv: process.env.NODE_ENV,
+  nodeEnv: process.env.NODE_ENV,
   isTest: process.env.NODE_ENV === 'test',
-    logLevel: process.env.LOG_LEVEL || 'info',
-  dbStorage: process.env.DB_STORAGE || './data/events.sqlite'
+  logLevel: process.env.LOG_LEVEL || 'info',
+  dbStorage: process.env.DB_STORAGE || './data/events.sqlite',
+  port: process.env.PORT || 3000
 };
