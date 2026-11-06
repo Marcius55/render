@@ -8,9 +8,11 @@ import { registrationRepository } from './repositories/registrationRepository.mj
 import { AppError } from './errors/AppError.mjs';
 import { eventService } from './services/eventService.mjs';
 
-// The tests import these from app.mjs, so keep re-exporting them.
 export { sequelize, Event, Registration };
 export { seedDemoData } from './db/seed.mjs';
+import { registrationService } from './services/registrationService.mjs';
+import { statsService } from './services/statsService.mjs';
+
 
 // ---------------------------------------------------------------- validation
 
@@ -147,87 +149,37 @@ app.get('/api/events/:id/registrations', async (req, res) => {
     });
   }
 
-  const ev = await eventRepository.findById(p.data.id);
-  if (!ev) {
-    return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
-  }
-  const registrations = await registrationRepository.findAllByEvent(ev.id);
-  res.json(registrations);
+  res.json(await registrationService.listForEvent(p.data.id));
 });
 
-app.post('/api/events/:id/registrations', async (req, res, next) => {
-  try {
-    const p = idSchema.safeParse(req.params);
-    if (!p.success) {
-      return res.status(400).json({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Request validation failed',
-          details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-        }
-      });
-    }
-    const data = registrationSchema.safeParse(req.body);
-    if (!data.success) {
-      return res.status(400).json({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Request validation failed',
-          details: data.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
-        }
-      });
-    }
-
-    const ev = await eventRepository.findById(p.data.id);
-    if (ev) {
-      const existing = await registrationRepository.findByEventAndEmail(ev.id, data.data.email);
-      if (!existing) {
-        
-        const count = await registrationRepository.countByEvent(ev.id);
-        if (count > ev.capacity) {
-          return res.status(409).json({ error: { code: 'CONFLICT', message: 'Event is full' } });
-        }
-
-        const reg = await registrationRepository.create({ eventId: ev.id, name: data.data.name, email: data.data.email });
-        logger.info('new registration for ' + ev.title + ': ' + data.data.name + ' <' + data.data.email + '>');
-
-        return res.status(201).json(reg);
-      } else {
-        return res.status(409).json({ error: { code: 'CONFLICT', message: `${data.data.email} is already registered for this event` } });
+app.post('/api/events/:id/registrations', async (req, res) => {
+  const p = idSchema.safeParse(req.params);
+  if (!p.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
       }
-    } else {
-      return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
-    }
-  } catch (err) {
-    next(err);
+    });
   }
+  const data = registrationSchema.safeParse(req.body);
+  if (!data.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: data.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
+      }
+    });
+  }
+
+  const registration = await registrationService.register(p.data.id, data.data);
+  res.status(201).json(registration);
 });
 
 app.get('/api/stats', async (req, res) => {
-  const events = await eventRepository.findAll();
-  const result = [];
-  for (let i = 0; i < events.length; i++) {
-    const regs = await registrationRepository.findAllByEvent(events[i].id);
-    let pct = 0;
-    if (events[i].capacity > 0) {
-      pct = Math.round((regs.length / events[i].capacity) * 100);
-    }
-    let status = 'open';
-    if (regs.length >= events[i].capacity) {
-      status = 'full';
-    } else if (new Date(events[i].startsAt) < new Date()) {
-      status = 'past';
-    }
-    result.push({
-      id: events[i].id,
-      title: events[i].title,
-      registered: regs.length,
-      capacity: events[i].capacity,
-      occupancy: pct + '%',
-      status: status
-    });
-  }
-  res.json(result);
+  res.json(await statsService.getStats());
 });
 
 app.use((req, res) => {
