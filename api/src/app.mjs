@@ -1,200 +1,21 @@
+// Campus Events API
+//
+// Wiring only: middleware and routes. The logic lives in the layers.
+
 import express from 'express';
-import { z } from 'zod';
-import { logger } from './config/logger.mjs';
 import { sequelize } from './db/sequelize.mjs';
 import { Event, Registration } from './models/index.mjs';
-import { eventRepository } from './repositories/eventRepository.mjs';
-import { registrationRepository } from './repositories/registrationRepository.mjs';
-import { AppError } from './errors/AppError.mjs';
-import { eventService } from './services/eventService.mjs';
+import { requestLogger } from './middleware/requestLogger.mjs';
+import { notFound, errorHandler } from './middleware/errorHandler.mjs';
+import { router } from './routes/index.mjs';
 
 export { sequelize, Event, Registration };
 export { seedDemoData } from './db/seed.mjs';
-import { registrationService } from './services/registrationService.mjs';
-import { statsService } from './services/statsService.mjs';
-
-
-// ---------------------------------------------------------------- validation
-
-const idSchema = z.object({
-  id: z.coerce.number().int().positive()
-});
-
-// Messages are shown to end users in the frontend, so keep them human.
-const createEventSchema = z.object({
-  title: z.string().trim().min(3, 'Use at least 3 characters').max(120, 'Use at most 120 characters'),
-  description: z.string().trim().max(2000, 'Use at most 2000 characters').optional(),
-  location: z.string().trim().min(2, 'Enter a location').max(120, 'Use at most 120 characters'),
-  startsAt: z.coerce.date({ error: 'Pick a date and time' }),
-  capacity: z.number({ error: 'Enter a number of seats' }).int('Use a whole number').min(1, 'At least 1 seat').max(10000, 'At most 10 000 seats')
-});
-
-const updateEventSchema = createEventSchema
-  .partial()
-  .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
-
-const registrationSchema = z.object({
-  name: z.string().trim().min(2, 'Enter your name (at least 2 characters)').max(100, 'Use at most 100 characters'),
-  email: z.email('Enter a valid email address').toLowerCase()
-});
-
-// ---------------------------------------------------------------- app
 
 export const app = express();
+
 app.use(express.json());
-
-app.use((req, res, next) => {
-  const start = performance.now();
-  res.on('finish', () => {
-    logger.info('request', {
-      method: req.method,
-      url: req.originalUrl,
-      status: res.statusCode,
-      durationMs: Math.round(performance.now() - start)
-    });
-  });
-  next();
-});
-
-app.get('/api/health', async (req, res) => {
-  await sequelize.authenticate();
-  res.status(200).json({ status: 'ok' });
-});
-
-app.get('/api/events', async (req, res) => {
-  res.json(await eventService.list());
-});
-
-app.get('/api/events/:id', async (req, res) => {
-  const p = idSchema.safeParse(req.params);
-  if (!p.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-      }
-    });
-  }
-
-  res.status(200).json(await eventService.getWithCounts(p.data.id));
-});
-
-app.post('/api/events', async (req, res) => {
-  const result = createEventSchema.safeParse(req.body);
-  if (!result.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: result.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
-      }
-    });
-  }
-
-  const event = await eventService.create(result.data);
-  res.status(201).location('/api/events/' + event.id).json(event);
-});
-
-app.patch('/api/events/:id', async (req, res) => {
-  const p = idSchema.safeParse(req.params);
-  if (!p.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-      }
-    });
-  }
-  const b = updateEventSchema.safeParse(req.body);
-  if (!b.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: b.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
-      }
-    });
-  }
-
-  res.status(200).json(await eventService.update(p.data.id, b.data));
-});
-
-app.delete('/api/events/:id', async (req, res) => {
-  const p = idSchema.safeParse(req.params);
-  if (!p.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-      }
-    });
-  }
-
-  await eventService.remove(p.data.id);
-  res.status(204).send();
-});
-
-app.get('/api/events/:id/registrations', async (req, res) => {
-  const p = idSchema.safeParse(req.params);
-  if (!p.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-      }
-    });
-  }
-
-  res.json(await registrationService.listForEvent(p.data.id));
-});
-
-app.post('/api/events/:id/registrations', async (req, res) => {
-  const p = idSchema.safeParse(req.params);
-  if (!p.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-      }
-    });
-  }
-  const data = registrationSchema.safeParse(req.body);
-  if (!data.success) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
-        details: data.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
-      }
-    });
-  }
-
-  const registration = await registrationService.register(p.data.id, data.data);
-  res.status(201).json(registration);
-});
-
-app.get('/api/stats', async (req, res) => {
-  res.json(await statsService.getStats());
-});
-
-app.use((req, res) => {
-  res.status(404).json({ error: { code: 'NOT_FOUND', message: `Route ${req.method} ${req.originalUrl} not found` } });
-});
-
-app.use((err, req, res, _next) => {
-  if (err instanceof AppError) {
-    const body = { code: err.code, message: err.message };
-    if (err.details) body.details = err.details;
-    return res.status(err.status).json({ error: body });
-  }
-  if (err.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: { code: 'INVALID_JSON', message: 'Request body is not valid JSON' } });
-  }
-  logger.error(err.message, { stack: err.stack });
-  res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' } });
-});
+app.use(requestLogger);
+app.use('/api', router);
+app.use(notFound);
+app.use(errorHandler);
