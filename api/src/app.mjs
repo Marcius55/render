@@ -1,22 +1,16 @@
-// Campus Events API
-//
-// Everything lives in this one file: settings, database, validation, routes and error handling.
-// It works, and tests/integration proves it. It is also hard to read, hard to test and
-// hard to change safely. Part 1 of the assignment: find out why, then split it into layers.
-
-
 import express from 'express';
 import { z } from 'zod';
 import { logger } from './config/logger.mjs';
 import { sequelize } from './db/sequelize.mjs';
 import { Event, Registration } from './models/index.mjs';
-
-export { sequelize, Event, Registration };
-export { seedDemoData } from './db/seed.mjs';
 import { eventRepository } from './repositories/eventRepository.mjs';
 import { registrationRepository } from './repositories/registrationRepository.mjs';
 import { AppError } from './errors/AppError.mjs';
 import { eventService } from './services/eventService.mjs';
+
+// The tests import these from app.mjs, so keep re-exporting them.
+export { sequelize, Event, Registration };
+export { seedDemoData } from './db/seed.mjs';
 
 // ---------------------------------------------------------------- validation
 
@@ -66,8 +60,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/events', async (req, res) => {
-  const events = await eventRepository.findAllOrderedByStart()
-  res.json(events);
+  res.json(await eventService.list());
 });
 
 app.get('/api/events/:id', async (req, res) => {
@@ -83,14 +76,6 @@ app.get('/api/events/:id', async (req, res) => {
   }
 
   res.status(200).json(await eventService.getWithCounts(p.data.id));
-
-  const ev = await eventRepository.findById(p.data.id)
-  if (!ev) {
-    return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
-  }
-
-  const count = await registrationRepository.countByEvent(ev.id)
-  res.status(200).json({ ...ev.toJSON(), registered: count, spotsLeft: Math.max(ev.capacity - count, 0) });
 });
 
 app.post('/api/events', async (req, res) => {
@@ -105,45 +90,36 @@ app.post('/api/events', async (req, res) => {
     });
   }
 
-  const event = await eventRepository.create(result.data)
+  const event = await eventService.create(result.data);
   res.status(201).location('/api/events/' + event.id).json(event);
 });
 
-app.patch('/api/events/:id', async (req, res, next) => {
-  try {
-    const p = idSchema.safeParse(req.params);
-    if (!p.success) {
-      return res.status(400).json({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Request validation failed',
-          details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
-        }
-      });
-    }
-    const b = updateEventSchema.safeParse(req.body);
-    if (!b.success) {
-      return res.status(400).json({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Request validation failed',
-          details: b.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
-        }
-      });
-    }
-
-    const event = await eventRepository.findById(p.data.id)
-    if (!event) {
-      return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
-    }
-    await eventRepository.update(event, b.data);
-    res.status(200).json(event);
-  } catch (err) {
-    next(err);
+app.patch('/api/events/:id', async (req, res) => {
+  const p = idSchema.safeParse(req.params);
+  if (!p.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: p.error.issues.map((i) => ({ field: i.path.join('.') || 'params', message: i.message }))
+      }
+    });
   }
+  const b = updateEventSchema.safeParse(req.body);
+  if (!b.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: b.error.issues.map((i) => ({ field: i.path.join('.') || 'body', message: i.message }))
+      }
+    });
+  }
+
+  res.status(200).json(await eventService.update(p.data.id, b.data));
 });
 
-  app.delete('/api/events/:id', async (req, res) => {
+app.delete('/api/events/:id', async (req, res) => {
   const p = idSchema.safeParse(req.params);
   if (!p.success) {
     return res.status(400).json({
@@ -155,10 +131,7 @@ app.patch('/api/events/:id', async (req, res, next) => {
     });
   }
 
-  const deleted = await eventRepository.deleteById(p.data.id);
-  if (deleted === 0) {
-    return res.status(404).json({ error: { code: 'NOT_FOUND', message: `Event with id ${p.data.id} not found` } });
-  }
+  await eventService.remove(p.data.id);
   res.status(204).send();
 });
 
@@ -209,7 +182,7 @@ app.post('/api/events/:id/registrations', async (req, res, next) => {
     if (ev) {
       const existing = await registrationRepository.findByEventAndEmail(ev.id, data.data.email);
       if (!existing) {
-        // is the event full?
+        
         const count = await registrationRepository.countByEvent(ev.id);
         if (count > ev.capacity) {
           return res.status(409).json({ error: { code: 'CONFLICT', message: 'Event is full' } });
@@ -217,10 +190,6 @@ app.post('/api/events/:id/registrations', async (req, res, next) => {
 
         const reg = await registrationRepository.create({ eventId: ev.id, name: data.data.name, email: data.data.email });
         logger.info('new registration for ' + ev.title + ': ' + data.data.name + ' <' + data.data.email + '>');
-
-        // TODO send a confirmation mail
-        // const transporter = nodemailer.createTransport(process.env.SMTP_URL);
-        // await transporter.sendMail({ to: data.data.email, subject: 'You are registered for ' + ev.title });
 
         return res.status(201).json(reg);
       } else {
@@ -235,10 +204,10 @@ app.post('/api/events/:id/registrations', async (req, res, next) => {
 });
 
 app.get('/api/stats', async (req, res) => {
-  const events = await eventRepository.findAll()
+  const events = await eventRepository.findAll();
   const result = [];
   for (let i = 0; i < events.length; i++) {
-    const regs = await registrationRepository.findAllByEvent(events[i].id)	
+    const regs = await registrationRepository.findAllByEvent(events[i].id);
     let pct = 0;
     if (events[i].capacity > 0) {
       pct = Math.round((regs.length / events[i].capacity) * 100);
@@ -265,18 +234,15 @@ app.use((req, res) => {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: `Route ${req.method} ${req.originalUrl} not found` } });
 });
 
-// Express recognises an error handler by its FOUR parameters.
 app.use((err, req, res, _next) => {
-  if (err.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: { code: 'INVALID_JSON', message: 'Request body is not valid JSON' } });
-  }
-    if (err instanceof AppError) {
+  if (err instanceof AppError) {
     const body = { code: err.code, message: err.message };
     if (err.details) body.details = err.details;
     return res.status(err.status).json({ error: body });
   }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: { code: 'INVALID_JSON', message: 'Request body is not valid JSON' } });
+  }
   logger.error(err.message, { stack: err.stack });
   res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' } });
 });
-
-// ---------------------------------------------------------------- demo data
