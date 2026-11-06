@@ -15,6 +15,8 @@ export { sequelize, Event, Registration };
 export { seedDemoData } from './db/seed.mjs';
 import { eventRepository } from './repositories/eventRepository.mjs';
 import { registrationRepository } from './repositories/registrationRepository.mjs';
+import { AppError } from './errors/AppError.mjs';
+import { eventService } from './services/eventService.mjs';
 
 // ---------------------------------------------------------------- validation
 
@@ -79,6 +81,8 @@ app.get('/api/events/:id', async (req, res) => {
       }
     });
   }
+
+  res.status(200).json(await eventService.getWithCounts(p.data.id));
 
   const ev = await eventRepository.findById(p.data.id)
   if (!ev) {
@@ -265,6 +269,11 @@ app.use((req, res) => {
 app.use((err, req, res, _next) => {
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: { code: 'INVALID_JSON', message: 'Request body is not valid JSON' } });
+  }
+    if (err instanceof AppError) {
+    const body = { code: err.code, message: err.message };
+    if (err.details) body.details = err.details;
+    return res.status(err.status).json({ error: body });
   }
   logger.error(err.message, { stack: err.stack });
   res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' } });
