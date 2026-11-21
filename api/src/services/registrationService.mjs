@@ -2,6 +2,7 @@ import { AppError } from '../errors/AppError.mjs';
 import { logger } from '../config/logger.mjs';
 import { registrationRepository } from '../repositories/registrationRepository.mjs';
 import { eventService } from './eventService.mjs';
+import { eventBus, BusEvents } from '../bus/eventBus.mjs';
 
 async function listForEvent(eventId) {
   const event = await eventService.getById(eventId);
@@ -21,9 +22,10 @@ async function register(eventId, { name, email }) {
     throw new AppError(409, 'CONFLICT', 'Event is full');
   }
 
-  const registration = await registrationRepository.create({ eventId: event.id, name, email });
-    logger.info('registration created', { eventId: event.id, registrationId: registration.id });
-  return registration;
+  const reg = await registrationRepository.create({ eventId: event.id, name, email });
+logger.info('registration created', { eventId: event.id, registrationId: reg.id });
+eventBus.emit(BusEvents.REGISTRATION_CREATED, { eventId: event.id, title: event.title });
+return reg;
 }
 
 export const registrationService = { listForEvent, register };

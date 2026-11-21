@@ -1,6 +1,7 @@
 import { AppError } from '../errors/AppError.mjs';
 import { eventRepository } from '../repositories/eventRepository.mjs';
 import { registrationRepository } from '../repositories/registrationRepository.mjs';
+import { eventBus, BusEvents } from '../bus/eventBus.mjs';
 
 function eventNotFound(id) {
   return new AppError(404, 'NOT_FOUND', `Event with id ${id} not found`);
@@ -29,7 +30,9 @@ async function getWithCounts(id) {
 }
 
 async function create(data) {
-  return eventRepository.create(data);
+  const event = await eventRepository.create(data);
+  eventBus.emit(BusEvents.EVENT_CREATED, { id: event.id, title: event.title });
+  return event;
 }
 
 async function update(id, data) {
