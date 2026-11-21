@@ -28,6 +28,7 @@ export const notificationController = {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       'X-Accel-Buffering': 'no',
+      'Access-Control-Allow-Origin': '*',
     });
     res.flushHeaders();
     res.write(': connected\n\n');

@@ -1,6 +1,9 @@
 import { ref } from 'vue';
 
-// The toasts currently on screen. `ref` makes Vue redraw whenever this changes.
+export function buildStreamUrl(apiUrl = '') {
+  return `${apiUrl.replace(/\/$/, '')}/api/notifications/stream`;
+}
+
 export const toasts = ref([]);
 
 let nextId = 1;
@@ -28,7 +31,7 @@ function readData(messageEvent) {
 export function connectNotifications(EventSourceClass = EventSource) {
   if (source) return; // already connected: never open a second line
 
-  source = new EventSourceClass('/api/notifications/stream');
+source = new EventSourceClass(buildStreamUrl(import.meta.env.VITE_API_URL));
 
   source.addEventListener('event-created', (messageEvent) => {
     const data = readData(messageEvent);
