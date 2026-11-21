@@ -40,6 +40,16 @@ async function update(id, data) {
   return eventRepository.update(event, data);
 }
 
+async function listWithCounts(when) {
+  const events = await eventRepository.findAllOrderedByStart();
+  const now = new Date();
+  const selected = events.filter((event) => {
+    const isPast = new Date(event.startsAt) < now;
+    return when === 'past' ? isPast : !isPast;
+  });
+  return Promise.all(selected.map((event) => getWithCounts(event.id)));
+}
+
 async function remove(id) {
   const deleted = await eventRepository.deleteById(id);
   if (deleted === 0) {
@@ -47,4 +57,4 @@ async function remove(id) {
   }
 }
 
-export const eventService = { list, getById, getWithCounts, create, update, remove };
+export const eventService = { list, getById, getWithCounts, listWithCounts, create, update, remove };
