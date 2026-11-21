@@ -1,5 +1,11 @@
 <script setup>
 import { RouterLink, RouterView } from 'vue-router';
+import { onBeforeUnmount, onMounted } from 'vue';
+import ToastContainer from './components/ToastContainer.vue';
+import { connectNotifications, disconnectNotifications } from './notifications.js';
+
+onMounted(() => connectNotifications());
+onBeforeUnmount(() => disconnectNotifications());
 </script>
 
 <template>
@@ -14,4 +20,6 @@ import { RouterLink, RouterView } from 'vue-router';
   <main class="page">
     <RouterView />
   </main>
+
+  <ToastContainer />
 </template>
