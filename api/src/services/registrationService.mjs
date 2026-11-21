@@ -22,7 +22,7 @@ async function register(eventId, { name, email }) {
   }
 
   const registration = await registrationRepository.create({ eventId: event.id, name, email });
-    logger.info('registration created', { eventId: event.id, registrationId: reg.id });
+    logger.info('registration created', { eventId: event.id, registrationId: registration.id });
   return registration;
 }
 
