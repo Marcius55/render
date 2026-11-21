@@ -22,10 +22,7 @@ async function register(eventId, { name, email }) {
   }
 
   const registration = await registrationRepository.create({ eventId: event.id, name, email });
-  logger.info('new registration for ' + event.title + ': ' + name + ' <' + email + '>');
-
-  // TODO send a confirmation mail
-
+    logger.info('registration created', { eventId: event.id, registrationId: reg.id });
   return registration;
 }
 
