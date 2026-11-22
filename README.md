@@ -33,6 +33,13 @@ Later parts need a few services. You never need them to run the tests.
 | Redis | `docker compose up -d redis` | `REDIS_URL` |
 | Identity provider | a free Auth0 tenant | `AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_CLIENT_ID` |
 
+## Live version
+
+- Frontend: https://campus-events-web.onrender.com
+- API: https://campus-api-events.onrender.com/api
+
+Free Render services sleep when idle, so the first request can take up to a minute.
+
 ## Scripts (run from the root folder)
 
 | Script | What it does |
@@ -48,34 +55,30 @@ Later parts need a few services. You never need them to run the tests.
 
 ```
 browser ──► web (Vite, :5173) ──/api/*──► api (Express, :3000) ──► SQLite (api/data/events.sqlite)
-```
+   ▲                                          │   ▲
+   └────── SSE stream (toasts) ◄──────────────┘   └── AI assistant ──MCP──► /api/mcp```
 
 In development Vite forwards every `/api/...` request to the API (see `web/vite.config.js`),
-so the browser only talks to one address and you don't need CORS.
+so the browser only talks to one address. Online, the browser connects to the notification
+stream directly on the API address (`VITE_API_URL`), because Render's frontend rewrite does not pass
+the long-lived stream through. Only that stream sends a CORS header.
 
 ### api/
 
 **Today** the whole API lives in one file:
 
-```
-api/src/app.mjs      settings, database + models, validation, routes, business rules, error handling
-api/src/server.mjs   starts the app (and adds demo data to an empty database)
-api/src/seed.mjs     npm run seed: reset the database
-```
+api/src/server.mjs    starts the app (and adds demo data to an empty database)
+api/src/app.mjs       wires middleware and routes together
 
-Prefered:
-
-```
 routes/        URL + validation → controller        (no logic)
 controllers/   HTTP in/out, picks the status code    (thin)
 services/      business rules, throws AppErrors      (no Express, no SQL)
 repositories/  data access via Sequelize             (no rules)
 models/ db/    tables, connection, demo data
 config/        the only place that reads process.env
-```
+bus/           in-process event bus (services announce what happened)
+mcp/           MCP tools, they only call services
 
-The integration tests in `api/tests/integration` only talk HTTP. They pass before your refactoring,
-and they must still pass after it, without changing them.
 
 | Method | URL | |
 |---|---|---|
@@ -84,10 +87,52 @@ and they must still pass after it, without changing them.
 | GET / PATCH / DELETE | `/api/events/:id` | One event (incl. `registered`, `spotsLeft`) |
 | GET / POST | `/api/events/:id/registrations` | List / register `{ name, email }` |
 | GET | `/api/stats` | Occupancy per event |
+| GET | `/api/notifications/stream` | Server-Sent Events: `event-created`, `registration-created` |
+| POST | `/api/mcp` | MCP server (Streamable HTTP, stateless) |
 
 Errors always have this shape: `{ "error": { "code", "message", "details?" } }`.
 
 ### web/
+
+## Live notifications
+
+Every open browser gets a toast when an event is created or someone registers. The server
+announces both on an in-process event bus, the notification controller forwards them over SSE,
+and the frontend (`web/src/notifications.js`) shows one toast per message. Notifications contain only
+ids and event titles, never who registered.
+
+## MCP server
+
+An AI assistant can use the app through `POST /api/mcp` with these tools:
+
+| Tool | Use |
+|---|---|
+| `get_upcoming_events` | "Get me all upcoming events" |
+| `get_past_events` | "Get me all past events" |
+| `register_for_event` | "Register Ada Lovelace (ada@example.com) for Welcome Day IXD" (the assistant finds the event id first) |
+
+Try it with `npx @modelcontextprotocol/inspector` (Streamable HTTP, URL
+`https://campus-api-events.onrender.com/api/mcp`), or add it to Claude Code:
+
+```bash
+claude mcp add --transport http campus-events https://campus-api-events.onrender.com/api/mcp
+```
+
+## Configuration
+
+| Variable | Where | Meaning |
+|---|---|---|
+| `DATABASE_URL` | api | Postgres connection string. If not set, SQLite is used. Ignored when `NODE_ENV=test`. |
+| `DB_STORAGE` | api | SQLite file path (default `./data/events.sqlite`) |
+| `PORT`, `LOG_LEVEL`, `NODE_ENV` | api | as usual |
+| `VITE_API_URL` | web (build time) | API address for the notification stream; empty in development |
+
+## Known limitations
+
+- `/api/mcp` has no login, so anyone who knows the URL can register people.
+- The event bus lives in one process; with several API instances, notifications would not reach every browser.
+- Registering is "count, then create", which is not atomic, and there is no unique index on (event, email).
+- The free Render Postgres database expires about 21 December 2026, and the free services sleep when idle.
 
 ```
 api/          client.js (fetch + ApiError) and events.js (one function per endpoint)
